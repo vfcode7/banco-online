@@ -1,8 +1,10 @@
 import streamlit as st
 from datetime import datetime
 import pandas as pd
+import json
+import os
 
-# Configuração da página
+# ====== CONFIGURAÇÃO ======
 st.set_page_config(
     page_title="Banco Online",
     page_icon="🏦",
@@ -10,31 +12,53 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# CSS customizado
 st.markdown("""
 <style>
     .main {
         padding: 2rem;
     }
-    .metric-card {
-        background-color: #f0f2f6;
-        padding: 1.5rem;
-        border-radius: 10px;
-        text-align: center;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-# Inicializar session state
+# ====== FUNÇÕES DE PERSISTÊNCIA ======
+DATA_FILE = "banco_dados.json"
+
+def carregar_dados():
+    """Carrega dados do arquivo JSON"""
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            return json.load(f)
+    return {
+        "usuarios": {
+            "joao": {"senha": "123456", "saldo": 5000.00, "transacoes": []},
+            "maria": {"senha": "senha456", "saldo": 10000.00, "transacoes": []}
+        }
+    }
+
+def salvar_dados(dados):
+    """Salva dados no arquivo JSON"""
+    with open(DATA_FILE, "w") as f:
+        json.dump(dados, f, indent=4)
+
+def adicionar_transacao(usuario, tipo, valor, descricao=""):
+    """Adiciona transação e atualiza saldo"""
+    dados = carregar_dados()
+    if usuario in dados["usuarios"]:
+        dados["usuarios"][usuario]["transacoes"].insert(0, {
+            "data": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "tipo": tipo,
+            "valor": f"-R$ {valor:.2f}" if "Transferência" in tipo or "Pagamento" in tipo or "Saque" in tipo else f"+R$ {valor:.2f}",
+            "descricao": descricao,
+            "saldo": f"R$ {dados['usuarios'][usuario]['saldo']:.2f}"
+        })
+        salvar_dados(dados)
+
+# ====== INICIALIZAR SESSION STATE ======
+dados_globais = carregar_dados()
+
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.usuario = ""
-    st.session_state.saldo = 5000.00
-    st.session_state.transacoes = [
-        {"Data": "2024-01-10", "Tipo": "Transferência", "Valor": "-R$ 500,00", "Saldo": "R$ 4.500,00"},
-        {"Data": "2024-01-09", "Tipo": "Depósito", "Valor": "+R$ 1.000,00", "Saldo": "R$ 5.000,00"},
-        {"Data": "2024-01-08", "Tipo": "Saque", "Valor": "-R$ 200,00", "Saldo": "R$ 5.200,00"}
-    ]
 
 # ====== TELA DE LOGIN ======
 if not st.session_state.logged_in:
@@ -56,8 +80,8 @@ if not st.session_state.logged_in:
                 registrar = st.form_submit_button("Registrar", use_container_width=True)
             
             if submit:
-                # Validação simples (em produção, usar banco de dados)
-                if usuario == "joao" and senha == "123456":
+                dados = carregar_dados()
+                if usuario in dados["usuarios"] and dados["usuarios"][usuario]["senha"] == senha:
                     st.session_state.logged_in = True
                     st.session_state.usuario = usuario
                     st.success("✅ Login realizado com sucesso!")
@@ -65,16 +89,22 @@ if not st.session_state.logged_in:
                     st.rerun()
                 else:
                     st.error("❌ Usuário ou senha incorretos!")
-                    st.info("📝 Teste: **joao** / **123456**")
+                    st.info("📝 Teste: **joao/123456** ou **maria/senha456**")
             
             if registrar:
                 st.info("📋 Funcionalidade de registro em desenvolvimento")
 
 # ====== DASHBOARD PRINCIPAL ======
 else:
+    dados = carregar_dados()
+    usuario_data = dados["usuarios"][st.session_state.usuario]
+    saldo = usuario_data["saldo"]
+    transacoes = usuario_data["transacoes"]
+    
     # Sidebar
     with st.sidebar:
         st.write(f"### 👤 {st.session_state.usuario}")
+        st.write(f"**Saldo**: R$ {saldo:.2f}")
         st.write("---")
         
         if st.button("🚪 Sair", use_container_width=True):
@@ -89,16 +119,16 @@ else:
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("💰 Saldo", f"R$ {st.session_state.saldo:.2f}", "+R$ 200,00")
+        st.metric("💰 Saldo", f"R$ {saldo:.2f}")
     
     with col2:
-        st.metric("📊 Transações", "12", "+2")
+        st.metric("📊 Transações", len(transacoes))
     
     with col3:
-        st.metric("💳 Limite", "R$ 2.000,00", "0")
+        st.metric("💳 Limite", "R$ 2.000,00")
     
     with col4:
-        st.metric("📅 Última Atualização", datetime.now().strftime("%H:%M:%S"), "")
+        st.metric("📅 Hora", datetime.now().strftime("%H:%M:%S"))
     
     st.write("---")
     
@@ -109,25 +139,20 @@ else:
     with tab1:
         st.subheader("📊 Extrato da Conta")
         
-        # Filtros
-        col1, col2 = st.columns(2)
-        with col1:
-            data_inicio = st.date_input("Data Inicial")
-        with col2:
-            data_fim = st.date_input("Data Final")
-        
-        # Tabela de transações
-        df_transacoes = pd.DataFrame(st.session_state.transacoes)
-        st.dataframe(df_transacoes, use_container_width=True)
-        
-        # Download
-        csv = df_transacoes.to_csv(index=False)
-        st.download_button(
-            label="📥 Baixar Extrato (CSV)",
-            data=csv,
-            file_name="extrato.csv",
-            mime="text/csv"
-        )
+        if transacoes:
+            df_transacoes = pd.DataFrame(transacoes)
+            st.dataframe(df_transacoes, use_container_width=True)
+            
+            # Download
+            csv = df_transacoes.to_csv(index=False)
+            st.download_button(
+                label="📥 Baixar Extrato (CSV)",
+                data=csv,
+                file_name="extrato.csv",
+                mime="text/csv"
+            )
+        else:
+            st.info("📭 Nenhuma transação registrada")
     
     # ABA 2: TRANSFERÊNCIA
     with tab2:
@@ -137,37 +162,37 @@ else:
             col1, col2 = st.columns(2)
             
             with col1:
-                banco = st.selectbox("Banco", ["Banco do Brasil", "Itaú", "Bradesco", "Caixa", "Outro"])
-                agencia = st.text_input("Agência", placeholder="0000")
+                banco = st.selectbox("Banco", ["Banco do Brasil", "Itaú", "Bradesco", "Caixa", "Outro"], key="banco_trans")
+                agencia = st.text_input("Agência", placeholder="0000", key="agencia_trans")
             
             with col2:
-                tipo_conta = st.selectbox("Tipo de Conta", ["Corrente", "Poupança"])
-                conta = st.text_input("Conta", placeholder="00000-0")
+                tipo_conta = st.selectbox("Tipo de Conta", ["Corrente", "Poupança"], key="tipo_conta_trans")
+                conta = st.text_input("Conta", placeholder="00000-0", key="conta_trans")
             
-            nome_beneficiario = st.text_input("Nome do Beneficiário", placeholder="Digite o nome completo")
-            cpf = st.text_input("CPF do Beneficiário", placeholder="000.000.000-00")
-            valor = st.number_input("Valor (R$)", min_value=0.01, step=0.01, value=0.0)
+            nome_beneficiario = st.text_input("Nome do Beneficiário", placeholder="Digite o nome completo", key="nome_bene")
+            cpf = st.text_input("CPF do Beneficiário", placeholder="000.000.000-00", key="cpf_trans")
+            valor = st.number_input("Valor (R$)", min_value=0.01, step=0.01, value=0.0, key="valor_trans")
             
             col1, col2 = st.columns(2)
             with col1:
                 submit = st.form_submit_button("✅ Confirmar Transferência", use_container_width=True)
             with col2:
-                limpar = st.form_submit_button("🔄 Limpar", use_container_width=True)
+                st.form_submit_button("🔄 Limpar", use_container_width=True)
             
             if submit:
                 if valor <= 0:
                     st.error("❌ Digite um valor válido!")
-                elif valor > st.session_state.saldo:
+                elif valor > saldo:
                     st.error("❌ Saldo insuficiente!")
                 else:
+                    # Atualizar dados
+                    dados = carregar_dados()
+                    dados["usuarios"][st.session_state.usuario]["saldo"] -= valor
+                    adicionar_transacao(st.session_state.usuario, "Transferência", valor, f"para {nome_beneficiario}")
+                    salvar_dados(dados)
+                    
                     st.success(f"✅ Transferência de R$ {valor:.2f} enviada para {nome_beneficiario}!")
-                    st.session_state.saldo -= valor
-                    st.session_state.transacoes.insert(0, {
-                        "Data": datetime.now().strftime("%Y-%m-%d"),
-                        "Tipo": "Transferência",
-                        "Valor": f"-R$ {valor:.2f}",
-                        "Saldo": f"R$ {st.session_state.saldo:.2f}"
-                    })
+                    st.rerun()
     
     # ABA 3: PAGAMENTOS
     with tab3:
@@ -177,33 +202,33 @@ else:
             col1, col2 = st.columns(2)
             
             with col1:
-                tipo = st.selectbox("Tipo de Pagamento", ["Energia Elétrica", "Água", "Internet", "Telefone", "Boleto"])
+                tipo = st.selectbox("Tipo de Pagamento", ["Energia Elétrica", "Água", "Internet", "Telefone", "Boleto"], key="tipo_pag")
             
             with col2:
-                valor = st.number_input("Valor (R$)", min_value=0.01, step=0.01, value=0.0)
+                valor = st.number_input("Valor (R$)", min_value=0.01, step=0.01, value=0.0, key="valor_pag")
             
-            codigo = st.text_input("Código de Barras / Referência", placeholder="Digite o código")
+            codigo = st.text_input("Código de Barras / Referência", placeholder="Digite o código", key="codigo_pag")
             
             col1, col2 = st.columns(2)
             with col1:
                 submit = st.form_submit_button("✅ Realizar Pagamento", use_container_width=True)
             with col2:
-                limpar = st.form_submit_button("🔄 Limpar", use_container_width=True)
+                st.form_submit_button("🔄 Limpar", use_container_width=True)
             
             if submit:
                 if valor <= 0:
                     st.error("❌ Digite um valor válido!")
-                elif valor > st.session_state.saldo:
+                elif valor > saldo:
                     st.error("❌ Saldo insuficiente!")
                 else:
+                    # Atualizar dados
+                    dados = carregar_dados()
+                    dados["usuarios"][st.session_state.usuario]["saldo"] -= valor
+                    adicionar_transacao(st.session_state.usuario, f"Pagamento - {tipo}", valor, codigo)
+                    salvar_dados(dados)
+                    
                     st.success(f"✅ Pagamento de R$ {valor:.2f} ({tipo}) realizado com sucesso!")
-                    st.session_state.saldo -= valor
-                    st.session_state.transacoes.insert(0, {
-                        "Data": datetime.now().strftime("%Y-%m-%d"),
-                        "Tipo": f"Pagamento - {tipo}",
-                        "Valor": f"-R$ {valor:.2f}",
-                        "Saldo": f"R$ {st.session_state.saldo:.2f}"
-                    })
+                    st.rerun()
     
     # ABA 4: CONFIGURAÇÕES
     with tab4:
@@ -214,16 +239,21 @@ else:
         with col1:
             st.write("### 🔐 Alterar Senha")
             with st.form("password_form"):
-                senha_atual = st.text_input("Senha Atual", type="password")
-                senha_nova = st.text_input("Nova Senha", type="password")
-                confirmar = st.text_input("Confirmar Senha", type="password")
+                senha_atual = st.text_input("Senha Atual", type="password", key="senha_atual")
+                senha_nova = st.text_input("Nova Senha", type="password", key="senha_nova")
+                confirmar = st.text_input("Confirmar Senha", type="password", key="confirmar_senha")
                 
                 if st.form_submit_button("Atualizar Senha", use_container_width=True):
-                    if len(senha_nova) < 6:
+                    dados = carregar_dados()
+                    if dados["usuarios"][st.session_state.usuario]["senha"] != senha_atual:
+                        st.error("❌ Senha atual incorreta!")
+                    elif len(senha_nova) < 6:
                         st.error("❌ Senha deve ter pelo menos 6 caracteres!")
                     elif senha_nova != confirmar:
                         st.error("❌ As senhas não coincidem!")
                     else:
+                        dados["usuarios"][st.session_state.usuario]["senha"] = senha_nova
+                        salvar_dados(dados)
                         st.success("✅ Senha atualizada com sucesso!")
         
         with col2:
@@ -248,9 +278,8 @@ else:
         with col2:
             st.write("### 📊 Resumo")
             st.write(f"""
-            - **Saldo Disponível**: R$ {st.session_state.saldo:.2f}
+            - **Saldo Disponível**: R$ {saldo:.2f}
             - **Limite**: R$ 2.000,00
-            - **Saldo Total**: R$ {st.session_state.saldo + 2000:.2f}
+            - **Saldo Total**: R$ {saldo + 2000:.2f}
             - **Última Atualização**: {datetime.now().strftime("%d/%m/%Y %H:%M")}
             """)
-
